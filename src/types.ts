@@ -10,6 +10,7 @@ export type TelemetryData = {
   battery_voltage: number;
   tank_distance_cm: number;
   pump_state: boolean;
+  soil_type: string;
 };
 
 export type SystemConfig = {
@@ -20,5 +21,6 @@ export type SystemConfig = {
   admin_phone: string;
   reminder_interval_hours: number;
   alert_moisture_level: number;
+  active_soil_type: string;
   updated_at: string;
 };
