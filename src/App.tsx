@@ -17,11 +17,11 @@ export default function App() {
 
   // Form states for config
   const [pumpCommand, setPumpCommand] = useState<"AUTO" | "ON" | "OFF">("AUTO");
-  const [drySoilThreshold, setDrySoilThreshold] = useState(650);
+  const [drySoilThreshold, setDrySoilThreshold] = useState(35);
   const [tankEmptyCm, setTankEmptyCm] = useState(120);
   const [adminPhone, setAdminPhone] = useState("+23324125197");
   const [reminderIntervalHours, setReminderIntervalHours] = useState(24);
-  const [alertMoistureLevel, setAlertMoistureLevel] = useState(700);
+  const [alertMoistureLevel, setAlertMoistureLevel] = useState(30);
 
   // Fetch Telemetry Data
   async function fetchReadings() {
@@ -29,7 +29,7 @@ export default function App() {
       .from("sensor_readings")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(100);
+      .limit(1000); // Fetch more data for complete history
 
     if (!error && data) {
       setReadings(data as TelemetryData[]);
@@ -59,11 +59,11 @@ export default function App() {
       const defaultCfg = {
         id: 1,
         pump_command: "AUTO",
-        dry_soil_threshold: 650,
+        dry_soil_threshold: 35,
         tank_empty_cm: 120,
         admin_phone: "+23324125197",
         reminder_interval_hours: 24,
-        alert_moisture_level: 700,
+        alert_moisture_level: 30,
       };
       await supabase.from("system_configs").insert([defaultCfg]);
       setConfig(defaultCfg as SystemConfig);
@@ -109,6 +109,39 @@ export default function App() {
     }
   }
 
+  // Export Data to CSV
+  function exportToCSV() {
+    const headers = [
+      "Timestamp (Accra)",
+      "Soil Moisture (%)",
+      "Soil Temp (C)",
+      "Air Temp (C)",
+      "Air Humidity (%)",
+      "Tank Distance (cm)",
+      "Pump State",
+      "Battery (V)"
+    ];
+    const rows = readings.map((r) => [
+      formatCreatedAt(r.created_at),
+      r.soil_moisture ?? "—",
+      r.soil_temp ?? "—",
+      r.air_temp ?? "—",
+      r.air_humidity ?? "—",
+      r.tank_distance_cm ?? "—",
+      r.pump_state ? "ON" : "OFF",
+      r.battery_voltage ?? "—"
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `irrigation_telemetry_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   useEffect(() => {
     fetchReadings();
     fetchConfig();
@@ -145,6 +178,14 @@ export default function App() {
     return Math.round(percentage);
   };
 
+  // Water Volume Calculation:
+  // Assume each positive pump reading represents a 15-minute cycle at a flow rate of 3.5 Liters/min.
+  // We can calculate water applied per node dynamically based on historical logged data.
+  const activeReadingsCount = readings.filter(r => r.pump_state).length;
+  const flowRateLitrePerMin = 3.5;
+  const standardMinutesPerCycle = 15;
+  const totalWaterLiters = activeReadingsCount * standardMinutesPerCycle * flowRateLitrePerMin;
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
       <header className="sticky top-0 z-10 bg-white border-b border-slate-200">
@@ -159,11 +200,17 @@ export default function App() {
           </div>
           <div className="flex items-center gap-3">
             <button
+              onClick={exportToCSV}
+              className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md shadow-sm hover:bg-slate-50 focus:outline-none"
+            >
+              Export Data (CSV)
+            </button>
+            <button
               onClick={() => {
                 fetchReadings();
                 fetchConfig();
               }}
-              className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md shadow-sm hover:bg-slate-50 focus:outline-none"
+              className="px-4 py-2 text-sm font-medium text-white bg-slate-950 border border-slate-950 rounded-md shadow-sm hover:bg-slate-900 focus:outline-none"
             >
               Force Sync
             </button>
@@ -180,14 +227,14 @@ export default function App() {
             </div>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-3xl font-semibold text-slate-950">
-                {latest?.soil_moisture ?? "—"}
+                {latest?.soil_moisture ?? "—"}%
               </span>
               <span className="text-xs text-slate-500">
-                / {config?.dry_soil_threshold ?? 650} Max Dry
+                / {config?.dry_soil_threshold ?? 35}% Min Limit
               </span>
             </div>
             <div className="mt-2 text-xs text-slate-500">
-              {latest && latest.soil_moisture > (config?.dry_soil_threshold ?? 650) ? (
+              {latest && latest.soil_moisture < (config?.dry_soil_threshold ?? 35) ? (
                 <span className="text-amber-600 font-medium">Dry Condition Met</span>
               ) : (
                 <span className="text-emerald-600 font-medium">Moisture Adequate</span>
@@ -261,21 +308,18 @@ export default function App() {
 
           <Card>
             <div className="text-xs font-medium text-slate-500 uppercase tracking-wider">
-              Sensor Temperatures
+              Total Water Applied
             </div>
-            <div className="mt-2 space-y-1">
-              <div className="flex justify-between">
-                <span className="text-xs text-slate-500">Soil:</span>
-                <span className="text-sm font-semibold text-slate-900">
-                  {latest?.soil_temp ?? "—"}°C
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-xs text-slate-500">Air:</span>
-                <span className="text-sm font-semibold text-slate-900">
-                  {latest?.air_temp ?? "—"}°C
-                </span>
-              </div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-semibold text-slate-950">
+                {totalWaterLiters.toFixed(1)} L
+              </span>
+              <span className="text-xs text-slate-500">
+                ({activeReadingsCount} cycles)
+              </span>
+            </div>
+            <div className="mt-2 text-xs text-slate-500">
+              <span className="text-slate-500">Avg. 52.5L applied per activation</span>
             </div>
           </Card>
 
@@ -285,15 +329,15 @@ export default function App() {
             </div>
             <div className="mt-2 space-y-1">
               <div className="flex justify-between">
-                <span className="text-xs text-slate-500">Humidity:</span>
-                <span className="text-sm font-semibold text-slate-900">
-                  {latest?.air_humidity ?? "—"}%
+                <span className="text-xs text-slate-500">Soil/Air Temp:</span>
+                <span className="text-xs font-semibold text-slate-900">
+                  {latest?.soil_temp ?? "—"}°C / {latest?.air_temp ?? "—"}°C
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-xs text-slate-500">Battery:</span>
-                <span className="text-sm font-semibold text-slate-900">
-                  {latest?.battery_voltage ?? "—"}V
+                <span className="text-xs text-slate-500">Humidity/Bat:</span>
+                <span className="text-xs font-semibold text-slate-900">
+                  {latest?.air_humidity ?? "—"}% / {latest?.battery_voltage ?? "—"}V
                 </span>
               </div>
             </div>
@@ -304,10 +348,10 @@ export default function App() {
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2 space-y-6">
             <Card title="Moisture & Water Level Trends">
-              <MoistureTankChart data={readings} />
+              <MoistureTankChart data={readings.slice(0, 100)} />
             </Card>
             <Card title="Environmental Metrics (Temperature & Humidity)">
-              <EnvironmentChart data={readings} />
+              <EnvironmentChart data={readings.slice(0, 100)} />
             </Card>
           </div>
 
@@ -320,7 +364,7 @@ export default function App() {
                 <form onSubmit={handleSaveConfig} className="space-y-4">
                   <div>
                     <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider">
-                      Dry Soil Moisture Threshold
+                      Dry Soil Moisture Threshold (%)
                     </label>
                     <input
                       type="number"
@@ -329,7 +373,7 @@ export default function App() {
                       className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
                     />
                     <p className="text-[10px] text-slate-400 mt-1">
-                      Activates the pump in Auto mode if reading rises above this.
+                      Activates the pump in Auto mode if reading falls below this.
                     </p>
                   </div>
 
@@ -377,7 +421,7 @@ export default function App() {
 
                   <div>
                     <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider">
-                      Alert Moisture Level Threshold
+                      Alert Moisture Level Threshold (%)
                     </label>
                     <input
                       type="number"
@@ -402,24 +446,25 @@ export default function App() {
 
         {/* Telemetry Logs */}
         <Card title="Station Activity Logs">
-          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+          {/* Scrollable Container with Max Height of 80 */}
+          <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-80 overflow-y-auto">
             <table className="min-w-full divide-y divide-slate-200 text-xs">
-              <thead className="bg-slate-50 text-left font-medium text-slate-500">
+              <thead className="bg-slate-50 text-left font-medium text-slate-500 sticky top-0 z-10 shadow-sm">
                 <tr>
-                  <th className="px-4 py-3">Timestamp (Accra)</th>
-                  <th className="px-4 py-3">Soil Moisture</th>
-                  <th className="px-4 py-3">Soil Temp</th>
-                  <th className="px-4 py-3">Air Temp / Hum</th>
-                  <th className="px-4 py-3">Tank (cm)</th>
-                  <th className="px-4 py-3">Pump</th>
-                  <th className="px-4 py-3">Node Battery</th>
+                  <th className="px-4 py-3 bg-slate-50">Timestamp (Accra)</th>
+                  <th className="px-4 py-3 bg-slate-50">Soil Moisture (%)</th>
+                  <th className="px-4 py-3 bg-slate-50">Soil Temp</th>
+                  <th className="px-4 py-3 bg-slate-50">Air Temp / Hum</th>
+                  <th className="px-4 py-3 bg-slate-50">Tank (cm)</th>
+                  <th className="px-4 py-3 bg-slate-50">Pump</th>
+                  <th className="px-4 py-3 bg-slate-50">Node Battery</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {readings.map((r) => (
                   <tr key={r.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-2 font-mono">{formatCreatedAt(r.created_at)}</td>
-                    <td className="px-4 py-2 font-medium">{r.soil_moisture ?? "—"}</td>
+                    <td className="px-4 py-2 font-medium">{r.soil_moisture ?? "—"}%</td>
                     <td className="px-4 py-2">{r.soil_temp ?? "—"}°C</td>
                     <td className="px-4 py-2">
                       {r.air_temp ?? "—"}°C / {r.air_humidity ?? "—"}%
